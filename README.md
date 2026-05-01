@@ -1,8 +1,6 @@
 # Uniswap V3 Vault Stagenet Demo
 
-A demo Uniswap v3 LP vault built for use on a contract.dev Stagenet.
-
-This repo contains a simple Uniswap v3 LP vault that can be deployed to a Stagenet and used to demonstrate a production-like DeFi testing workflow.
+This repo contains a demo Uniswap v3 LP vault that can be deployed to a [Stagenet](https://docs.contract.dev/stagenets). and used to demonstrate a production-grade DeFi testing workflow.
 
 ## How the vault works
 
