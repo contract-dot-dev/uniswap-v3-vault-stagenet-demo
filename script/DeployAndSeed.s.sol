@@ -60,6 +60,7 @@ contract DeployAndSeed is Script {
         console.log("Vault total supply:   ", vault.totalSupply());
         console.log("Sender share balance: ", vault.balanceOf(sender));
         console.log("Active position id:   ", vault.tokenId());
-        console.log("USD TVL (1e18):       ", vault.getUsdTvl());
+        console.log("USD TVL:              ", vault.getUsdTvl());
+        console.log("USD share price:      ", vault.getUsdSharePrice());
     }
 }

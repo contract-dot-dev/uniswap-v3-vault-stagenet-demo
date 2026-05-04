@@ -157,40 +157,25 @@ contract UniswapV3Vault is ERC20 {
 
     // *** VIEW FUNCTIONS ***
 
-    // Returns the token0/token1 amounts owned by the vault's position
+    // Returns the token0/token1 amounts owned by the vault's position,
+    // scaled down by each token's decimals (i.e. whole-token units).
     function totalUnderlying()
         public
         view
         returns (uint256 amount0, uint256 amount1)
     {
-        if (tokenId != 0) {
-            (uint160 sqrtPriceX96, , , , , , ) = pool.slot0();
+        (uint256 raw0, uint256 raw1) = _totalUnderlyingRaw();
 
-            (uint256 pos0, uint256 pos1) = PositionMath.total(
-                positionManager,
-                tokenId,
-                sqrtPriceX96
-            );
-
-            amount0 += pos0;
-            amount1 += pos1;
-        }
-
-        // Idle tokens not used in mints are included in the underlying balance
-        amount0 += IERC20(token0).balanceOf(address(this));
-        amount1 += IERC20(token1).balanceOf(address(this));
+        amount0 = raw0 / (10 ** IERC20Metadata(token0).decimals());
+        amount1 = raw1 / (10 ** IERC20Metadata(token1).decimals());
     }
 
-    // Returns the USD TVL of the vault, scaled to 1e18
+    // Returns the USD TVL of the vault, in whole USD
     function getUsdTvl() public view returns (uint256 usdValue) {
-        (uint256 amount0, uint256 amount1) = totalUnderlying();
-
-        usdValue =
-            _tokenUsdValue(amount0, token0, token0PriceFeed) +
-            _tokenUsdValue(amount1, token1, token1PriceFeed);
+        usdValue = _getUsdTvlRaw() / ONE;
     }
 
-    // Returns the USD value of one share, scaled to 1e18
+    // Returns the USD value of one share, in whole USD per share
     function getUsdSharePrice() external view returns (uint256 price) {
         uint256 supply = totalSupply();
 
@@ -198,7 +183,9 @@ contract UniswapV3Vault is ERC20 {
             return 0;
         }
 
-        price = FullMath.mulDiv(getUsdTvl(), ONE, supply);
+        // Both _getUsdTvlRaw() and supply are 1e18-scaled, so their integer
+        // ratio is USD per share at 1e0 scale.
+        price = _getUsdTvlRaw() / supply;
     }
 
     // Returns the token amounts required to mint the given number of shares.
@@ -438,6 +425,40 @@ contract UniswapV3Vault is ERC20 {
 
     // *** INTERNAL FUNCTIONS ***
 
+    // Full-precision underlying token amounts (raw, no decimal scaling).
+    // Used by mint pro-rata math and the raw USD TVL calculation.
+    function _totalUnderlyingRaw()
+        internal
+        view
+        returns (uint256 amount0, uint256 amount1)
+    {
+        if (tokenId != 0) {
+            (uint160 sqrtPriceX96, , , , , , ) = pool.slot0();
+
+            (uint256 pos0, uint256 pos1) = PositionMath.total(
+                positionManager,
+                tokenId,
+                sqrtPriceX96
+            );
+
+            amount0 += pos0;
+            amount1 += pos1;
+        }
+
+        // Idle tokens not used in mints are included in the underlying balance
+        amount0 += IERC20(token0).balanceOf(address(this));
+        amount1 += IERC20(token1).balanceOf(address(this));
+    }
+
+    // Full-precision USD TVL, scaled to 1e18.
+    function _getUsdTvlRaw() internal view returns (uint256 usdValue) {
+        (uint256 amount0, uint256 amount1) = _totalUnderlyingRaw();
+
+        usdValue =
+            _tokenUsdValue(amount0, token0, token0PriceFeed) +
+            _tokenUsdValue(amount1, token1, token1PriceFeed);
+    }
+
     function _increaseLiquidity()
         internal
         returns (uint128 liquidity, uint256 amount0Used, uint256 amount1Used)
@@ -469,7 +490,7 @@ contract UniswapV3Vault is ERC20 {
 
         uint256 shareSupplyBefore = totalSupply();
 
-        (uint256 total0, uint256 total1) = totalUnderlying();
+        (uint256 total0, uint256 total1) = _totalUnderlyingRaw();
 
         if (shareSupplyBefore == 0) {
             (uint160 sqrtPriceX96, , , , , , ) = pool.slot0();
