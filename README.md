@@ -69,7 +69,7 @@ export PRIVATE_KEY=<YOUR_FUNDED_PRIVATE_KEY>
 export VAULT=<DEPLOYED_VAULT_ADDRESS>
 
 # Mint shares and add liquidity to the vault's position
-SHARES=500000000000000000000000 forge script script/Mint.s.sol \
+SHARES=50000000000000000 forge script script/Mint.s.sol \
   --rpc-url $STAGENET_RPC_URL \
   --private-key $PRIVATE_KEY \
   --broadcast

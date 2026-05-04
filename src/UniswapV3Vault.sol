@@ -85,6 +85,11 @@ contract UniswapV3Vault is ERC20 {
     uint256 public rebalanceCount;
     uint256 public compoundCount;
 
+    // Lifetime fees collected by the vault from its position(s),
+    // accumulated across compound, rebalance, and withdraw calls.
+    uint256 public totalFees0Collected;
+    uint256 public totalFees1Collected;
+
     // *** EVENTS ***
 
     event Mint(
@@ -114,6 +119,8 @@ contract UniswapV3Vault is ERC20 {
         int24 newTickUpper,
         uint256 rebalanceCount
     );
+
+    event FeesCollected(uint256 amount0, uint256 amount1);
 
     // *** CONSTRUCTOR ***
 
@@ -201,6 +208,33 @@ contract UniswapV3Vault is ERC20 {
         return currentTick;
     }
 
+    // Returns the fees the active position has accrued but not yet collected,
+    // in raw token0/token1 units. Computed from pool fee growth accumulators,
+    // matching what positionManager.collect would return at this block.
+    function fees()
+        external
+        view
+        returns (uint256 amount0, uint256 amount1)
+    {
+        if (tokenId == 0) {
+            return (0, 0);
+        }
+
+        (amount0, amount1) = PositionMath.fees(positionManager, tokenId);
+    }
+
+    // Returns the lifetime fees the vault has collected from its position(s),
+    // in raw token0/token1 units. Updated whenever the vault calls
+    // positionManager.collect (compound, rebalance, withdraw).
+    function cumulativeFees()
+        external
+        view
+        returns (uint256 amount0, uint256 amount1)
+    {
+        amount0 = totalFees0Collected;
+        amount1 = totalFees1Collected;
+    }
+
     // *** EXTERNAL STATE-CHANGING FUNCTIONS ***
 
     // Mints vault shares by depositing the token0 and token1
@@ -273,8 +307,11 @@ contract UniswapV3Vault is ERC20 {
                 FullMath.mulDiv(liquidity, shares, supplyBefore)
             );
 
+            uint256 principal0;
+            uint256 principal1;
+
             if (liquidityToBurn > 0) {
-                positionManager.decreaseLiquidity(
+                (principal0, principal1) = positionManager.decreaseLiquidity(
                     INonfungiblePositionManager.DecreaseLiquidityParams({
                         tokenId: tokenId,
                         liquidity: liquidityToBurn,
@@ -285,7 +322,7 @@ contract UniswapV3Vault is ERC20 {
                 );
             }
 
-            positionManager.collect(
+            (uint256 collected0, uint256 collected1) = positionManager.collect(
                 INonfungiblePositionManager.CollectParams({
                     tokenId: tokenId,
                     recipient: address(this),
@@ -293,6 +330,10 @@ contract UniswapV3Vault is ERC20 {
                     amount1Max: type(uint128).max
                 })
             );
+
+            // The collect call drains everything owed, which equals the
+            // principal just unlocked plus accrued fees. The remainder is fees.
+            _accrueFees(collected0 - principal0, collected1 - principal1);
         }
 
         _burn(msg.sender, shares);
@@ -317,7 +358,7 @@ contract UniswapV3Vault is ERC20 {
     function compound() external returns (uint128 liquidityAdded) {
         require(tokenId != 0, "No position");
 
-        positionManager.collect(
+        (uint256 fees0, uint256 fees1) = positionManager.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: tokenId,
                 recipient: address(this),
@@ -325,6 +366,8 @@ contract UniswapV3Vault is ERC20 {
                 amount1Max: type(uint128).max
             })
         );
+
+        _accrueFees(fees0, fees1);
 
         (
             uint128 liquidity,
@@ -349,8 +392,11 @@ contract UniswapV3Vault is ERC20 {
             tokenId
         );
 
+        uint256 principal0;
+        uint256 principal1;
+
         if (liquidity > 0) {
-            positionManager.decreaseLiquidity(
+            (principal0, principal1) = positionManager.decreaseLiquidity(
                 INonfungiblePositionManager.DecreaseLiquidityParams({
                     tokenId: tokenId,
                     liquidity: liquidity,
@@ -363,7 +409,7 @@ contract UniswapV3Vault is ERC20 {
 
         // 2. Collect all tokens
 
-        positionManager.collect(
+        (uint256 collected0, uint256 collected1) = positionManager.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: tokenId,
                 recipient: address(this),
@@ -371,6 +417,10 @@ contract UniswapV3Vault is ERC20 {
                 amount1Max: type(uint128).max
             })
         );
+
+        // The collect drains principal just unlocked plus accrued fees.
+        // The remainder over the unlocked principal is fees.
+        _accrueFees(collected0 - principal0, collected1 - principal1);
 
         // 3. Read current tick and compute new aligned tick range
 
@@ -457,6 +507,17 @@ contract UniswapV3Vault is ERC20 {
         usdValue =
             _tokenUsdValue(amount0, token0, token0PriceFeed) +
             _tokenUsdValue(amount1, token1, token1PriceFeed);
+    }
+
+    function _accrueFees(uint256 fees0, uint256 fees1) internal {
+        if (fees0 == 0 && fees1 == 0) {
+            return;
+        }
+
+        totalFees0Collected += fees0;
+        totalFees1Collected += fees1;
+
+        emit FeesCollected(fees0, fees1);
     }
 
     function _increaseLiquidity()
